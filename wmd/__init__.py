@@ -11,6 +11,8 @@ sys.path.insert(0, os.path.dirname(__file__))  # nopep8
 import libwmdrelax
 del sys.path[0]
 
+from spacy_transformers.pipeline.tok2vec import get_token_vector_via_tensor
+
 __version__ = (1, 2, 12)
 
 
@@ -105,7 +107,7 @@ class WMD(object):
 
     .. automethod:: __init__
     """  # nopep8
-    def __init__(self, embeddings, nbow, vocabulary_min=50, vocabulary_max=500,
+    def __init__(self, embeddings, nbow, vocabulary_min=1, vocabulary_max=500,
                  vocabulary_optimizer=TailVocabularyOptimizer(),
                  verbosity=logging.INFO, main_loop_log_interval=60):
         """
@@ -382,8 +384,7 @@ class WMD(object):
 
     def _common_vocabulary_batch(self, words1, weights1, i2):
         words2, weights2 = self._get_vocabulary(i2)
-        words1 = numpy.asarray(words1).astype(words2.dtype)
-        joint, index = numpy.unique(numpy.concatenate((words1, words2)),
+        joint, index = numpy.unique(numpy.concatenate((numpy.array(words1, dtype=numpy.uint64), numpy.array(words2, dtype=numpy.uint64))),
                                     return_index=True)
         nw1 = numpy.zeros(len(joint), dtype=numpy.float32)
         cmp = index < len(words1)
@@ -392,7 +393,7 @@ class WMD(object):
         nw2[numpy.searchsorted(joint, words2)] = weights2
         return joint, nw1, nw2
 
-    def _get_centroid(self, words, weights, force=False):
+    def _get_centroid(self, words, weights, force=True):
         n = weights.sum()
         if n <= 0 or (len(words) < self.vocabulary_min and not force):
             return None
@@ -460,7 +461,7 @@ class WMD(object):
         keys = numpy.array(keys)
         self._centroid_cache = (keys, centroids)
 
-    def nearest_neighbors(self, origin, k=10, early_stop=0.5, max_time=3600,
+    def nearest_neighbors(self, origin, k=10, early_stop=1.0, max_time=3600,
                           skipped_stop=0.99, throw=True):
         """
         Find the closest samples to the specified one by WMD metric.
@@ -496,7 +497,7 @@ class WMD(object):
         """
         # origin can be either a text query or an id
         if isinstance(origin, (tuple, list)):
-            words, weights = origin
+            _, words, weights = origin
             if not isinstance(words, (list, numpy.ndarray)):
                 words = list(words)
             weights = numpy.array(weights, dtype=numpy.float32)
@@ -636,16 +637,22 @@ class WMD(object):
             :return: The calculated similarity.
             :rtype: float.
             """
+
             doc1 = self._convert_document(doc1)
             doc2 = self._convert_document(doc2)
+
             vocabulary = {
                 w: i for i, w in enumerate(sorted(set(doc1).union(doc2)))}
+
             w1 = self._generate_weights(doc1, vocabulary)
             w2 = self._generate_weights(doc2, vocabulary)
             evec = numpy.zeros((len(vocabulary), self.nlp.vocab.vectors_length),
                                dtype=numpy.float32)
+
             for w, i in vocabulary.items():
                 evec[i] = self.nlp.vocab[w].vector
+                # print(f'==[ w: {w}, vocab[w]: {self.nlp.vocab[w]}')
+                # evec[i] = get_token_vector_via_tensor(self.nlp.vocab[w])
             evec_sqr = (evec * evec).sum(axis=1)
             dists = evec_sqr - 2 * evec.dot(evec.T) + evec_sqr[:, numpy.newaxis]
             dists[dists < 0] = 0
